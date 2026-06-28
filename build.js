@@ -219,10 +219,10 @@ function dumpbinExportsToDef(dllName, dumpbinOut) {
 				inTable = false;
 				continue;
 			}
-			// Typical line: "          1    0  NextConnect"
+			// Typical line: "          1    0 00011000 NextConnect"
 			const parts = line.trim().split(/\s+/);
-			if (parts.length >= 3) {
-				exports.push(parts[2]);
+			if (parts.length >= 4) {
+				exports.push(parts[3]);
 			}
 		}
 	}
