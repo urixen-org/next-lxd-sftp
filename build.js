@@ -120,18 +120,18 @@ function main() {
 
 	if (!noClean) {
 		try {
-			run('node-gyp clean');
+			run('npx --yes node-gyp clean');
 		} catch {
 			// ignore if there's nothing to clean
 		}
 	}
 
 	if (isDebug) {
-		run('node-gyp configure --debug');
-		run('node-gyp build --debug');
+		run('npx --yes node-gyp configure --debug');
+		run('npx --yes node-gyp build --debug');
 	} else {
-		run('node-gyp configure');
-		run('node-gyp build');
+		run('npx --yes node-gyp configure');
+		run('npx --yes node-gyp build');
 	}
 
 	// ── 3. Done ────────────────────────────────────────────────────────────
