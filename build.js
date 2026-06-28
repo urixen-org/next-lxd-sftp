@@ -95,8 +95,9 @@ function banner(label) {
 }
 
 /**
- * Search for a MSVC tool (cl.exe, lib.exe, dumpbin.exe) by looking
- * in PATH first, then scanning common VS installation directories.
+ * Search for a MSVC tool (lib.exe, dumpbin.exe) by looking
+ * in PATH first, then using vswhere, then scanning common
+ * VS installation directories.
  *
  * Returns the full path to the tool, or null if not found.
  */
@@ -106,10 +107,58 @@ function findMSVCTool(name) {
 		execSync(`where ${name}`, { stdio: 'pipe' });
 		return name;
 	} catch {
-		// scan VS installations
+		// not in PATH, search
 	}
 
-	const candidates = ['2022', '2019', '2017'];
+	// Try vswhere first (pre-installed on GitHub Actions runners)
+	const vswherePath = path.join(
+		process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+		'Microsoft Visual Studio',
+		'Installer',
+		'vswhere.exe'
+	);
+	if (existsSync(vswherePath)) {
+		try {
+			const result = execSync(
+				`"${vswherePath}" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`,
+				{ encoding: 'utf8' }
+			);
+			const vsPath = result.trim();
+			if (vsPath) {
+				const msvcDir = path.join(vsPath, 'VC', 'Tools', 'MSVC');
+				if (existsSync(msvcDir)) {
+					const versions = readdirSync(msvcDir)
+						.filter((d) => /^\d/.test(d))
+						.sort()
+						.reverse();
+					for (const ver of versions) {
+						const toolPath = path.join(msvcDir, ver, 'bin', 'Hostx64', 'x64', name);
+						if (existsSync(toolPath)) {
+							console.log(`  \u2192 found ${name} at ${toolPath}`);
+							return toolPath;
+						}
+					}
+				}
+			}
+		} catch {
+			// vswhere failed, fall through to directory scan
+		}
+	}
+
+	// Fallback: scan common VS directories
+	const candidates = [
+		'2026',
+		'2025',
+		'2024',
+		'2023',
+		'2022',
+		'2019',
+		'2017',
+		'18',
+		'17',
+		'16',
+		'15'
+	];
 	const editions = ['Community', 'Professional', 'Enterprise', 'BuildTools'];
 	const programFiles = [
 		process.env.ProgramFiles || 'C:\\Program Files',
