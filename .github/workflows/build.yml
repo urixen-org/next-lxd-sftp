@@ -10,26 +10,55 @@ jobs:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # ── Windows (native x64, c-shared DLL) ──────────────────────────
           - runner: windows-latest
             goos: windows
             goarch: amd64
+            node_arch: x64
 
+          # ── Linux (native amd64, c-archive) ────────────────────────────
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
+            node_arch: x64
 
+          # ── Linux (native arm64, c-archive) ────────────────────────────
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            node_arch: arm64
+
+          # ── macOS (Intel, c-archive) ───────────────────────────────────
           - runner: macos-13
             goos: darwin
             goarch: amd64
+            node_arch: x64
 
+          # ── macOS (Apple Silicon, c-archive) ───────────────────────────
           - runner: macos-14
             goos: darwin
             goarch: arm64
+            node_arch: arm64
+
+          # ── 32-bit targets (experimental) ──────────────────────────────
+          - runner: windows-latest
+            goos: windows
+            goarch: '386'
+            node_arch: x86
+            mingw: true
+
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: '386'
+            node_arch: x86
+            multilib: true
 
     env:
       GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +67,39 @@ jobs:
         with:
           go-version: stable
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js (${{ matrix.node_arch }})
+        uses: actions/setup-node@v4
         with:
           node-version: 22
+          architecture: ${{ matrix.node_arch }}
 
-      - name: Install dependencies
-        run: npm ci
+      # ── Cross-compilation / 32-bit toolchain setup ─────────────────────
 
-      - name: Build Go and native addon
+      - name: Install 32-bit MinGW (Windows 386)
+        if: matrix.mingw
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          echo "CC=i686-w64-mingw32-gcc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install multilib (Linux 386)
+        if: matrix.multilib
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-multilib g++-multilib
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-m32" >> $GITHUB_ENV
+
+      # ── Build ─────────────────────────────────────────────────────────
+
+      - name: Install npm dependencies (skip install script)
+        run: npm install --ignore-scripts
+
+      - name: Build Go library and native addon
         run: node build.js
 
       - name: Package with node-pre-gyp
-        run: npx node-pre-gyp package
+        run: npx --yes node-pre-gyp package
 
       - name: Upload packaged tarball
         uses: actions/upload-artifact@v4
@@ -58,6 +108,7 @@ jobs:
           path: build/stage/
           if-no-files-found: error
 
+  # ── Publish to GitHub Release ─────────────────────────────────────────
   publish:
     name: Publish to GitHub Releases
     needs: build
@@ -77,7 +128,7 @@ jobs:
           path: build/stage/
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Consolidate tarballs into stage directory
         shell: bash
@@ -92,4 +143,4 @@ jobs:
       - name: Publish to GitHub Release
         env:
           NODE_PRE_GYP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx node-pre-gyp-github publish --release
+        run: npx --yes node-pre-gyp-github publish --release

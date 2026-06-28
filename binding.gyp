@@ -4,6 +4,12 @@
     "conditions": [
       ["target_arch=='arm64'", {
         "goarch%": "arm64"
+      }],
+      ["target_arch=='ia32'", {
+        "goarch%": "386"
+      }],
+      ["target_arch=='arm'", {
+        "goarch%": "arm"
       }]
     ]
   },

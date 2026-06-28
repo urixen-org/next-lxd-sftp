@@ -3,10 +3,13 @@
  *
  * Orchestrates:
  *   1. Compile the Go backend
- *      - Windows:   c-shared (DLL) + MSVC import lib via dumpbin + lib.exe
+ *      - Windows:   c-shared (DLL) + MSVC import lib via .h file parsing
  *      - macOS/Linux: c-archive (static lib)
  *   2. Run node-gyp to build the final .node file
  *   3. Copy DLL alongside .node on Windows (for runtime loading)
+ *
+ * All compiled Go artifacts use Go-style naming:
+ *   next-lxd.<goos>-<goarch>.<ext>   (e.g. next-lxd.windows-amd64.lib)
  *
  * Usage:
  *   node build.js                  # release build
@@ -24,7 +27,8 @@ const {
 	readdirSync,
 	renameSync,
 	unlinkSync,
-	writeFileSync
+	writeFileSync,
+	readFileSync
 } = require('fs');
 const path = require('path');
 const os = require('os');
@@ -45,7 +49,8 @@ const isLinux = os.platform() === 'linux';
 // ─── Platform / Arch mapping (Go naming convention) ─────────────────────────
 //
 // Matches the naming scheme used by go/build.ps1 so that artifacts produced by
-// either script are interchangeable.
+// either script are interchangeable. Maps Node.js `os.platform()` / `os.arch()`
+// values to Go toolchain equivalents.
 
 const PLATFORM_MAP = {
 	win32: 'windows',
@@ -62,14 +67,20 @@ const ARCH_MAP = {
 
 const MACHINE_MAP = {
 	amd64: 'x64',
-	arm64: 'ARM64'
+	386: 'x86',
+	arm64: 'ARM64',
+	arm: 'ARM'
 };
 
 function getGoPlatform() {
+	// Allow override via GOOS env var (for cross-compilation in CI)
+	if (process.env.GOOS) return process.env.GOOS;
 	return PLATFORM_MAP[os.platform()] || os.platform();
 }
 
 function getGoArch() {
+	// Allow override via GOARCH env var (for cross-compilation in CI)
+	if (process.env.GOARCH) return process.env.GOARCH;
 	return ARCH_MAP[os.arch()] || os.arch();
 }
 
@@ -199,38 +210,41 @@ function findMSVCTool(name) {
 }
 
 /**
- * Parse dumpbin /exports output into a .def file string.
+ * Generate a .def file from a Go-generated c-shared header file.
+ *
+ * The Go c-shared buildmode produces a .h file with declarations like:
+ *   extern char* NextConnect(char* _params);
+ *
+ * We parse the .h to extract all exported function names and generate
+ * a corresponding .def file for MSVC's lib.exe. This is much more
+ * robust than parsing dumpbin /exports output (format varies across
+ * MSVC versions) and doesn't require external tools like gendef.
+ *
+ * @param {string} dllName - The LIBRARY name in the .def (e.g. "next-lxd.dll")
+ * @param {string} headerContent - The full text of the Go-generated .h
+ * @returns {string} Contents for a .def file
  */
-function dumpbinExportsToDef(dllName, dumpbinOut) {
-	const lines = dumpbinOut.split('\n');
+function headerToDef(dllName, headerContent) {
 	const exports = [];
-	let inTable = false;
-
-	for (const raw of lines) {
-		const line = raw.trim();
-		if (line.includes('ordinal hint')) {
-			inTable = true;
-			continue;
-		}
-		if (inTable) {
-			if (line === '' || !/^\s*\d+/.test(line)) {
-				// end of table: empty line or non-numeric start
-				if (exports.length > 0) break;
-				inTable = false;
-				continue;
-			}
-			// Typical line: "          1    0 00011000 NextConnect"
-			const parts = line.trim().split(/\s+/);
-			if (parts.length >= 4) {
-				exports.push(parts[3]);
-			}
+	for (const line of headerContent.split('\n')) {
+		const trimmed = line.trim();
+		// Match: extern char* NextFunctionName(...);
+		const match = trimmed.match(/^extern\s+char\*\s+(Next\w+)/);
+		if (match) {
+			exports.push(match[1]);
 		}
 	}
 
-	// Deduplicate and sort (for a clean .def)
+	if (exports.length === 0) {
+		throw new Error(
+			'No exports found in Go-generated header. ' + 'The header may have an unexpected format.'
+		);
+	}
+
+	// Deduplicate and sort for a clean .def
 	const unique = [...new Set(exports)].sort();
 
-	return [`LIBRARY ${dllName}`, 'EXPORTS', ...unique.map((e) => '  ' + e)].join('\n') + '\n';
+	return ['LIBRARY ' + dllName, 'EXPORTS', ...unique.map((e) => '  ' + e)].join('\n') + '\n';
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -260,15 +274,40 @@ function main() {
 		// Build as a DLL (instead of c-archive) to avoid .pdata format conflicts
 		// between GCC (which Go's cgo finds via Git for Windows) and MSVC.
 		// The DLL uses MinGW-style linking internally; MSVC only sees the
-		// import library created from the DLL exports.
+		// import library created from the DLL exports via the Go-generated .h.
 
 		const dllFile = path.join(COMPILED_DIR, 'next-lxd.dll');
+		const dllArchFile = path.join(COMPILED_DIR, `${baseName}.dll`);
 
 		run(`go build -buildmode=c-shared -o "${dllFile}" ./lib`, {
 			cwd: GO_DIR
 		});
 
-		// Locate MSVC tools to create the import library
+		// Read the Go-generated header to build a .def file
+		const headerSrc = path.join(COMPILED_DIR, 'next-lxd.h');
+		if (!existsSync(headerSrc)) {
+			throw new Error(
+				'Go c-shared build did not produce next-lxd.h. ' +
+					'Check that the Go source has //export comments.'
+			);
+		}
+		const headerContent = readFileSync(headerSrc, 'utf8');
+
+		// Build .def — the LIBRARY name matches the arch-prefixed DLL name
+		const defContent = headerToDef(`${baseName}.dll`, headerContent);
+		const defFile = path.join(COMPILED_DIR, `${baseName}.def`);
+		writeFileSync(defFile, defContent);
+		console.log(`  \u2713 generated ${path.relative(ROOT, defFile)}`);
+
+		// Rename DLL and header to match Go naming convention
+		if (existsSync(dllArchFile)) unlinkSync(dllArchFile);
+		renameSync(dllFile, dllArchFile);
+
+		const headerDst = path.join(COMPILED_DIR, `${baseName}.h`);
+		if (existsSync(headerDst)) unlinkSync(headerDst);
+		renameSync(headerSrc, headerDst);
+
+		// Locate MSVC lib.exe to create the import library
 		const libExe = findMSVCTool('lib.exe');
 		if (!libExe) {
 			throw new Error(
@@ -278,30 +317,10 @@ function main() {
 			);
 		}
 
-		const dumpbinExe = findMSVCTool('dumpbin.exe');
-		if (!dumpbinExe) {
-			throw new Error('MSVC dumpbin.exe not found — needed to generate .def from DLL exports.');
-		}
-
-		// Generate .def file from DLL exports using dumpbin
-		const dumpbinOut = execSync(`"${dumpbinExe}" /exports "${dllFile}"`, { encoding: 'utf8' });
-		const defContent = dumpbinExportsToDef('next-lxd.dll', dumpbinOut);
-		const defFile = path.join(COMPILED_DIR, 'next-lxd.def');
-		writeFileSync(defFile, defContent);
-		console.log(`  \u2713 generated ${path.relative(ROOT, defFile)}`);
-
 		// Create MSVC import library from the .def
 		const machine = MACHINE_MAP[goArch] || 'x64';
 		const libFile = path.join(COMPILED_DIR, `${baseName}.lib`);
 		run(`"${libExe}" /def:"${defFile}" /machine:${machine} /out:"${libFile}"`);
-
-		// Rename .h to match naming convention
-		const headerSrc = path.join(COMPILED_DIR, 'next-lxd.h');
-		const headerDst = path.join(COMPILED_DIR, `${baseName}.h`);
-		if (existsSync(headerSrc)) {
-			if (existsSync(headerDst)) unlinkSync(headerDst);
-			renameSync(headerSrc, headerDst);
-		}
 	} else {
 		// ── macOS / Linux: build as c-archive (static) ───────────────────────
 		const archFile = path.join(COMPILED_DIR, `${baseName}.a`);
@@ -348,14 +367,16 @@ function main() {
 	banner('Step 4/4: Deploying outputs');
 
 	if (isWin) {
-		const dllSrc = path.join(COMPILED_DIR, 'next-lxd.dll');
-		const dllDst = path.join(outDir, 'next-lxd.dll');
+		const dllSrc = path.join(COMPILED_DIR, `${baseName}.dll`);
+		const dllDst = path.join(outDir, `${baseName}.dll`);
 
 		if (existsSync(dllSrc)) {
 			copyFileSync(dllSrc, dllDst);
-			console.log('  \u2713 copied next-lxd.dll \u2192 ' + path.relative(ROOT, dllDst));
+			console.log(
+				'  \u2713 copied ' + path.relative(ROOT, dllSrc) + ' \u2192 ' + path.relative(ROOT, dllDst)
+			);
 		} else {
-			console.warn('  \u26A0 next-lxd.dll not found at ' + dllSrc);
+			console.warn('  \u26A0 DLL not found at ' + dllSrc);
 		}
 	}
 
