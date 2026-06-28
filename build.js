@@ -2,11 +2,11 @@
  * Cross-platform build script for next-lxd-sftp native addon.
  *
  * Orchestrates:
- *   1. Compile the Go backend into a static library (c-archive)
+ *   1. Compile the Go backend
+ *      - Windows:   c-shared (DLL) + MSVC import lib via dumpbin + lib.exe
+ *      - macOS/Linux: c-archive (static lib)
  *   2. Run node-gyp to build the final .node file
- *
- * Uses c-archive on all platforms so the .node file is self-contained
- * (Go code is linked directly into the addon — no separate DLL needed).
+ *   3. Copy DLL alongside .node on Windows (for runtime loading)
  *
  * Usage:
  *   node build.js                  # release build
@@ -17,7 +17,15 @@
 'use strict';
 
 const { execSync } = require('child_process');
-const { existsSync, mkdirSync, renameSync, unlinkSync } = require('fs');
+const {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync
+} = require('fs');
 const path = require('path');
 const os = require('os');
 
@@ -52,6 +60,11 @@ const ARCH_MAP = {
 	arm: 'arm'
 };
 
+const MACHINE_MAP = {
+	amd64: 'x64',
+	arm64: 'ARM64'
+};
+
 function getGoPlatform() {
 	return PLATFORM_MAP[os.platform()] || os.platform();
 }
@@ -67,9 +80,108 @@ function run(cmd, opts = {}) {
 	execSync(cmd, { stdio: 'inherit', cwd: ROOT, ...opts });
 }
 
+function tryRun(cmd, opts = {}) {
+	try {
+		run(cmd, opts);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function banner(label) {
 	const sep = '\u2500'.repeat(60);
 	console.log(`\n${sep}\n  ${label}\n${sep}`);
+}
+
+/**
+ * Search for a MSVC tool (cl.exe, lib.exe, dumpbin.exe) by looking
+ * in PATH first, then scanning common VS installation directories.
+ *
+ * Returns the full path to the tool, or null if not found.
+ */
+function findMSVCTool(name) {
+	// Already in PATH?
+	try {
+		execSync(`where ${name}`, { stdio: 'pipe' });
+		return name;
+	} catch {
+		// scan VS installations
+	}
+
+	const candidates = ['2022', '2019', '2017'];
+	const editions = ['Community', 'Professional', 'Enterprise', 'BuildTools'];
+	const programFiles = [
+		process.env.ProgramFiles || 'C:\\Program Files',
+		process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+	];
+
+	for (const pf of programFiles) {
+		for (const year of candidates) {
+			for (const edition of editions) {
+				const msvcDir = path.join(
+					pf,
+					'Microsoft Visual Studio',
+					year,
+					edition,
+					'VC',
+					'Tools',
+					'MSVC'
+				);
+				if (!existsSync(msvcDir)) continue;
+
+				const versions = readdirSync(msvcDir)
+					.filter((d) => /^\d/.test(d))
+					.sort()
+					.reverse();
+
+				for (const ver of versions) {
+					const toolPath = path.join(msvcDir, ver, 'bin', 'Hostx64', 'x64', name);
+					if (existsSync(toolPath)) {
+						console.log(`  \u2192 found ${name} at ${toolPath}`);
+						return toolPath;
+					}
+				}
+			}
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Parse dumpbin /exports output into a .def file string.
+ */
+function dumpbinExportsToDef(dllName, dumpbinOut) {
+	const lines = dumpbinOut.split('\n');
+	const exports = [];
+	let inTable = false;
+
+	for (const raw of lines) {
+		const line = raw.trim();
+		if (line.includes('ordinal hint')) {
+			inTable = true;
+			continue;
+		}
+		if (inTable) {
+			if (line === '' || !/^\s*\d+/.test(line)) {
+				// end of table: empty line or non-numeric start
+				if (exports.length > 0) break;
+				inTable = false;
+				continue;
+			}
+			// Typical line: "          1    0  NextConnect"
+			const parts = line.trim().split(/\s+/);
+			if (parts.length >= 3) {
+				exports.push(parts[2]);
+			}
+		}
+	}
+
+	// Deduplicate and sort (for a clean .def)
+	const unique = [...new Set(exports)].sort();
+
+	return [`LIBRARY ${dllName}`, 'EXPORTS', ...unique.map((e) => '  ' + e)].join('\n') + '\n';
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -87,43 +199,91 @@ function main() {
 
 	// ── 1. Build Go backend ────────────────────────────────────────────────
 
-	banner(`Step 1/3: Building Go library (${buildType})`);
+	banner(`Step 1/4: Building Go library (${buildType})`);
 
-	// Ensure compiled directory exists
 	if (!existsSync(COMPILED_DIR)) {
 		mkdirSync(COMPILED_DIR, { recursive: true });
 	}
 
-	const ext = isWin ? 'lib' : 'a';
+	if (isWin) {
+		// ── Windows: build as c-shared DLL ───────────────────────────────────
+		//
+		// Build as a DLL (instead of c-archive) to avoid .pdata format conflicts
+		// between GCC (which Go's cgo finds via Git for Windows) and MSVC.
+		// The DLL uses MinGW-style linking internally; MSVC only sees the
+		// import library created from the DLL exports.
 
-	// Build as c-archive on all platforms (static linking into .node)
-	const archFile = path.join(COMPILED_DIR, `${baseName}.${ext}`);
-	run(`go build -buildmode=c-archive -o "${archFile}" ./lib`, {
-		cwd: GO_DIR
-	});
+		const dllFile = path.join(COMPILED_DIR, 'next-lxd.dll');
 
-	// Rename .h to match naming convention
-	const headerSrc = path.join(COMPILED_DIR, 'next-lxd.h');
-	const headerDst = path.join(COMPILED_DIR, `${baseName}.h`);
-	if (existsSync(headerSrc)) {
-		if (existsSync(headerDst)) unlinkSync(headerDst);
-		renameSync(headerSrc, headerDst);
+		run(`go build -buildmode=c-shared -o "${dllFile}" ./lib`, {
+			cwd: GO_DIR
+		});
+
+		// Locate MSVC tools to create the import library
+		const libExe = findMSVCTool('lib.exe');
+		if (!libExe) {
+			throw new Error(
+				'MSVC lib.exe not found.\n' +
+					'  Open a Visual Studio Developer Command Prompt and run the build from there,\n' +
+					"  or install the 'Desktop development with C++' workload via the Visual Studio Installer."
+			);
+		}
+
+		const dumpbinExe = findMSVCTool('dumpbin.exe');
+		if (!dumpbinExe) {
+			throw new Error('MSVC dumpbin.exe not found — needed to generate .def from DLL exports.');
+		}
+
+		// Generate .def file from DLL exports using dumpbin
+		const dumpbinOut = execSync(`"${dumpbinExe}" /exports "${dllFile}"`, { encoding: 'utf8' });
+		const defContent = dumpbinExportsToDef('next-lxd.dll', dumpbinOut);
+		const defFile = path.join(COMPILED_DIR, 'next-lxd.def');
+		writeFileSync(defFile, defContent);
+		console.log(`  \u2713 generated ${path.relative(ROOT, defFile)}`);
+
+		// Create MSVC import library from the .def
+		const machine = MACHINE_MAP[goArch] || 'x64';
+		const libFile = path.join(COMPILED_DIR, `${baseName}.lib`);
+		run(`"${libExe}" /def:"${defFile}" /machine:${machine} /out:"${libFile}"`);
+
+		// Rename .h to match naming convention
+		const headerSrc = path.join(COMPILED_DIR, 'next-lxd.h');
+		const headerDst = path.join(COMPILED_DIR, `${baseName}.h`);
+		if (existsSync(headerSrc)) {
+			if (existsSync(headerDst)) unlinkSync(headerDst);
+			renameSync(headerSrc, headerDst);
+		}
+	} else {
+		// ── macOS / Linux: build as c-archive (static) ───────────────────────
+		const archFile = path.join(COMPILED_DIR, `${baseName}.a`);
+
+		run(`go build -buildmode=c-archive -o "${archFile}" ./lib`, {
+			cwd: GO_DIR
+		});
+
+		// Rename .h to match naming convention
+		const headerSrc = path.join(COMPILED_DIR, 'next-lxd.h');
+		const headerDst = path.join(COMPILED_DIR, `${baseName}.h`);
+		if (existsSync(headerSrc)) {
+			if (existsSync(headerDst)) unlinkSync(headerDst);
+			renameSync(headerSrc, headerDst);
+		}
 	}
 
-	// ── 2. Build native addon with node-gyp ────────────────────────────────
+	// ── 2. Ensure output directories exist ─────────────────────────────────
 
-	banner('Step 2/3: Building native addon (node-gyp)');
+	banner('Step 2/4: Ensuring output directories');
 
 	if (!existsSync(outDir)) {
 		mkdirSync(outDir, { recursive: true });
 	}
 
+	// ── 3. Build native addon with node-gyp ────────────────────────────────
+
+	banner('Step 3/4: Building native addon (node-gyp)');
+
 	if (!noClean) {
-		try {
-			run('npx --yes node-gyp clean');
-		} catch {
-			// ignore if there's nothing to clean
-		}
+		tryRun('npx --yes node-gyp clean');
 	}
 
 	if (isDebug) {
@@ -134,11 +294,23 @@ function main() {
 		run('npx --yes node-gyp build');
 	}
 
-	// ── 3. Done ────────────────────────────────────────────────────────────
+	// ── 4. Deploy DLL alongside .node (Windows only) ───────────────────────
 
-	banner('Step 3/3: Done');
+	banner('Step 4/4: Deploying outputs');
 
-	console.log('  \u2713 Build complete!');
+	if (isWin) {
+		const dllSrc = path.join(COMPILED_DIR, 'next-lxd.dll');
+		const dllDst = path.join(outDir, 'next-lxd.dll');
+
+		if (existsSync(dllSrc)) {
+			copyFileSync(dllSrc, dllDst);
+			console.log('  \u2713 copied next-lxd.dll \u2192 ' + path.relative(ROOT, dllDst));
+		} else {
+			console.warn('  \u26A0 next-lxd.dll not found at ' + dllSrc);
+		}
+	}
+
+	console.log('\n  \u2713 Build complete!');
 	console.log('  \u25C0 ' + path.relative(ROOT, outDir) + path.sep + 'next-lxd.node');
 }
 
