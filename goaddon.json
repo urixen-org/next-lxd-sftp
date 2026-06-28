@@ -1,0 +1,32 @@
+{
+  "name": "next-lxd",
+  "sources": ["go/lib/bridge.go"],
+  "output": "./",
+  "exports": [
+    { "name": "NextConnect",    "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextConnect",    "jscallmode": "sync" },
+    { "name": "NextDisconnect", "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextDisconnect", "jscallmode": "sync" },
+    { "name": "NextReadDir",    "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextReadDir",    "jscallmode": "sync" },
+    { "name": "NextStat",       "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextStat",       "jscallmode": "sync" },
+    { "name": "NextLstat",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextLstat",      "jscallmode": "sync" },
+    { "name": "NextReadLink",   "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextReadLink",   "jscallmode": "sync" },
+    { "name": "NextSymlink",    "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextSymlink",    "jscallmode": "sync" },
+    { "name": "NextRealPath",   "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextRealPath",   "jscallmode": "sync" },
+    { "name": "NextGetwd",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextGetwd",      "jscallmode": "sync" },
+    { "name": "NextGlob",       "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextGlob",       "jscallmode": "sync" },
+    { "name": "NextOpen",       "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextOpen",       "jscallmode": "sync" },
+    { "name": "NextOpenFile",   "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextOpenFile",   "jscallmode": "sync" },
+    { "name": "NextCreate",     "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextCreate",     "jscallmode": "sync" },
+    { "name": "NextRead",       "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextRead",       "jscallmode": "sync" },
+    { "name": "NextWrite",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextWrite",      "jscallmode": "sync" },
+    { "name": "NextCloseFile",  "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextCloseFile",  "jscallmode": "sync" },
+    { "name": "NextRemove",     "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextRemove",     "jscallmode": "sync" },
+    { "name": "NextRemoveDir",  "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextRemoveDir",  "jscallmode": "sync" },
+    { "name": "NextRename",     "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextRename",     "jscallmode": "sync" },
+    { "name": "NextPosixRename","args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextPosixRename","jscallmode": "sync" },
+    { "name": "NextMkdir",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextMkdir",      "jscallmode": "sync" },
+    { "name": "NextMkdirAll",   "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextMkdirAll",   "jscallmode": "sync" },
+    { "name": "NextChmod",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextChmod",      "jscallmode": "sync" },
+    { "name": "NextChown",      "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextChown",      "jscallmode": "sync" },
+    { "name": "NextChtimes",    "args": [{ "name": "params", "type": "object" }], "returntype": "object", "jscallname": "nextChtimes",    "jscallmode": "sync" }
+  ]
+}

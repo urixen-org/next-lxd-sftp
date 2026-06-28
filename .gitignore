@@ -1,0 +1,11 @@
+node_modules/
+build/
+go/compiled/
+build/stage/
+*.o
+*.obj
+*.exp
+*.ilk
+*.pdb
+*.ipdb
+*.iobj
