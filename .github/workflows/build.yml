@@ -1,0 +1,95 @@
+name: Build and Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+
+          - runner: macos-13
+            goos: darwin
+            goarch: amd64
+
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+
+    env:
+      GOOS: ${{ matrix.goos }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Go and native addon
+        run: node build.js
+
+      - name: Package with node-pre-gyp
+        run: npx node-pre-gyp package
+
+      - name: Upload packaged tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: build/stage/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to GitHub Releases
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download all packaged tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: build/stage/
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Consolidate tarballs into stage directory
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          STAGE="build/stage/$VERSION"
+          mkdir -p "$STAGE"
+          find build/stage -name '*.tar.gz' -exec mv {} "$STAGE" \;
+          echo "=== Staged files ==="
+          ls -la "$STAGE"
+
+      - name: Publish to GitHub Release
+        env:
+          NODE_PRE_GYP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx node-pre-gyp-github publish --release
