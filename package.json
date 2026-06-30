@@ -9,8 +9,8 @@
 		"url": "https://github.com/urixen-org/next-lxd-sftp.git"
 	},
 	"binary": {
-		"module_name": "next-lxd",
-		"module_path": "./lib/binding/{node_abi}-{platform}-{arch}",
+		"module_name": "next-lxd", 
+		"module_path": "./build/Release",
 		"remote_path": "v{version}",
 		"package_name": "{module_name}-v{version}-{node_abi}-{platform}-{arch}.tar.gz",
 		"host": "https://github.com{version}"
