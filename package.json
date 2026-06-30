@@ -16,7 +16,7 @@
 		"host": "https://github.com/urixen-org/next-lxd-sftp/releases/download/"
 	},
 	"scripts": {
-		"install": "node-pre-gyp install --fallback-to-build=false || node build.js",
+		"install": "node-pre-gyp install --fallback-to-build=true || node build.js",
 		"build": "node build.js",
 		"build:debug": "node build.js --debug",
 		"build:release": "node build.js",
