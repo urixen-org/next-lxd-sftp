@@ -1,6 +1,6 @@
 {
 	"name": "next-lxd-sftp",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "LXD instance SFTP operations via a Node.js native addon — cross-platform (Go → C++ → N-API)",
 	"main": "index.js",
 	"types": "index.d.ts",
