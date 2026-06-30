@@ -13,7 +13,7 @@
 		"module_path": "./build/Release",
 		"remote_path": "v{version}",
 		"package_name": "{module_name}-v{version}-{node_abi}-{platform}-{arch}.tar.gz",
-		"host": "https://github.com{version}"
+		"host": "https://api.github.com/urixen-org/next-lxd-sftp/releases/download/"
 	},
 	"scripts": {
 		"install": "node-pre-gyp install --fallback-to-build=false || node build.js",
