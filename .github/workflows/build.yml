@@ -6,10 +6,14 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -68,20 +72,17 @@ jobs:
         with:
           go-version: stable
 
-      - name: Setup Node.js (${{ matrix.node_arch }})
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           architecture: ${{ matrix.node_arch }}
-
-      # ── Cross-compilation / 32-bit toolchain setup ─────────────────────
 
       - name: Install 32-bit MinGW (Windows 386)
         if: matrix.mingw
         shell: pwsh
         run: |
           choco install mingw -y --no-progress
-          echo "CC=i686-w64-mingw32-gcc" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CC=i686-w64-mingw32-gcc" | Out-File -Append $env:GITHUB_ENV
 
       - name: Install multilib (Linux 386)
         if: matrix.multilib
@@ -91,9 +92,7 @@ jobs:
           echo "CC=gcc" >> $GITHUB_ENV
           echo "CGO_CFLAGS=-m32" >> $GITHUB_ENV
 
-      # ── Build ─────────────────────────────────────────────────────────
-
-      - name: Install npm dependencies (skip install script)
+      - name: Install npm dependencies
         run: npm install --ignore-scripts
 
       - name: Build Go library and native addon
@@ -102,6 +101,12 @@ jobs:
       - name: Package with node-pre-gyp
         run: npx --yes node-pre-gyp package
 
+      - name: Debug packaged files
+        shell: bash
+        run: |
+          echo "=== build directory ==="
+          find build || true
+
       - name: Upload packaged tarball
         uses: actions/upload-artifact@v4
         with:
@@ -109,7 +114,6 @@ jobs:
           path: build/stage/
           if-no-files-found: error
 
-  # ── Publish to GitHub Release ─────────────────────────────────────────
   publish:
     name: Publish to GitHub Releases
     needs: build
@@ -122,25 +126,38 @@ jobs:
         with:
           node-version: 22
 
-      - name: Download all packaged tarballs
-        uses: actions/download-artifact@v4
-        with:
-          path: build/stage/
-
       - name: Install dependencies
         run: npm install
 
-      - name: Consolidate tarballs into stage directory
+      - name: Download packaged tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: build/stage
+
+      - name: Debug downloaded artifacts
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          STAGE="build/stage/$VERSION"
+          echo "=== Downloaded ==="
+          find build/stage
+
+      - name: Consolidate tarballs
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          STAGE="build/stage/${VERSION}"
+
           mkdir -p "$STAGE"
-          find build/stage -name '*.tar.gz' -exec mv {} "$STAGE" \;
-          echo "=== Staged files ==="
-          ls -la "$STAGE"
+
+          find build/stage -type f -name "*.tar.gz" -exec mv {} "$STAGE/" \;
+
+          echo
+          echo "=== Final stage ==="
+          find "$STAGE"
 
       - name: Publish to GitHub Release
         env:
           NODE_PRE_GYP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes node-pre-gyp-github publish --release --commitish main
+        run: |
+          npx --yes node-pre-gyp-github publish \
+            --release \
+            --commitish main
