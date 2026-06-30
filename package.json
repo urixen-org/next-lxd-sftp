@@ -42,5 +42,5 @@
 		"node-addon-api": "^8.9.0",
 		"@acalcutt/node-pre-gyp-github": "^2.0.3"
 	},
-	"gypfile": false
+	"gypfile":true
 }
