@@ -143,4 +143,4 @@ jobs:
       - name: Publish to GitHub Release
         env:
           NODE_PRE_GYP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes node-pre-gyp-github publish --release
+        run: npx --yes node-pre-gyp-github publish --release --commitish main
