@@ -1,6 +1,6 @@
 {
 	"name": "next-lxd-sftp",
-	"version": "v1.0.0",
+	"version": "1.0.0",
 	"description": "LXD instance SFTP operations via a Node.js native addon — cross-platform (Go → C++ → N-API)",
 	"main": "index.js",
 	"types": "index.d.ts",
@@ -10,12 +10,13 @@
 	},
 	"binary": {
 		"module_name": "next-lxd",
-		"module_path": "./build/Release",
-		"host": "https://github.com/urixen-org/next-lxd-sftp/releases/download/",
-		"remote_path": "{version}"
+		"module_path": "./lib/binding/{node_abi}-{platform}-{arch}",
+		"remote_path": "v{version}",
+		"package_name": "{module_name}-v{version}-{node_abi}-{platform}-{arch}.tar.gz",
+		"host": "https://github.com{version}"
 	},
 	"scripts": {
-		"install": "node-pre-gyp install || node build.js",
+		"install": "node-pre-gyp install --fallback-to-build=false || node build.js",
 		"build": "node build.js",
 		"build:debug": "node build.js --debug",
 		"build:release": "node build.js",
@@ -23,7 +24,7 @@
 		"clean": "node-pre-gyp clean",
 		"test": "node test.js",
 		"package": "node build.js && node-pre-gyp package",
-		"publish": "node-pre-gyp-github publish"
+		"publish": "node-pre-gyp-github publish --release"
 	},
 	"keywords": [
 		"lxd",
